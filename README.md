@@ -110,24 +110,40 @@ spark = SparkSession.builder \
 Baca dataset dan lakukan pembersihan data, seperti menghapus nilai kosong (`null`), studio yang bertuliskan `Unknown`, serta memfilter studio yang memiliki sampel anime terlalu sedikit (misal kurang dari 10 anime) untuk menjaga keandalan uji statistik.
 
 ```python
-from pyspark.sql.functions import col
+import pandas as pd
 
 # Load data
-df = spark.read.csv("anime_dataset.csv", header=True, inferSchema=True)
+data = pd.read_csv("anime_dataset_pre.csv")
 
-# Filter data yang tidak valid
-df_cleaned = df.filter(
-    col("studio").isNotNull() &
-    (col("studio") != "Unknown") &
-    col("popularity").isNotNull()
-)
+# mengamil colom yang dibutuhkan
+data = data[["title", "popularity", "favorites", "studios"]]
 
-# Hitung jumlah anime per studio dan saring studio dengan minimal 10 karya
-studio_counts = df_cleaned.groupBy("studio").count()
-popular_studios = studio_counts.filter(col("count") >= 10)
+# menyimpan perubahan yang dari kode sebelumnya
+data.to_csv("anime_dataset_pre.csv", index=False)
 
-# Join kembali untuk mendapatkan data akhir yang bersih
-df_final = df_cleaned.join(popular_studios, "studio").select("studio", "popularity")
+#menampilkan 5 baris pertama dari dataset, jumlah baris dan kolom pada dataset, ringkasan struktur dari dataset dan analisis deskriptif dari kolom numerik
+print(data.head())
+print(data.shape)
+print(data.info())
+print(data.describe())
+
+#menampilkan berapa banyak missing value pada tiap kolom lalu menghilangkan baris missing valuenya
+print(data.isnull().sum())
+data = data.dropna()
+
+#menampilkan berapa banyak data duplicate lalu menghilangkan baris data yang terduplicate
+print(data.duplicated().sum())
+data.drop_duplicates(inplace=True) 
+
+#Encode kolom studios
+from sklearn.preprocessing import LabelEncoder
+encoder = LabelEncoder()
+data["studios"] = encoder.fit_transform(data["studios"])
+
+#Normalisasi data kolom popularity dan favorites
+from sklearn.preprocessing import MinMaxScaler
+scaler = MinMaxScaler()
+data[["popularity", "favorites"]] = scaler.fit_transform(data[["popularity", "favorites"]])
 ```
 
 ### Langkah 3: Ekstraksi Data untuk Uji Statistik
