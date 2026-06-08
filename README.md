@@ -79,11 +79,12 @@ pip install -r requirements.txt
 Isi dari `requirements.txt` meliputi:
 
 ```text
-pyspark>=3.2.0
+openjdk>=24.0.2
+Python>=3.10.6
+pyspark>=4.1.2
 scipy>=1.7.0
 pandas>=1.3.0
-matplotlib>=3.4.0
-seaborn>=0.11.0
+scikit-learn>=1.8.0
 ```
 
 ---
