@@ -100,9 +100,12 @@ Inisialisasi koneksi Spark dengan alokasi memori yang sesuai di dalam script Pyt
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder \
-    .appName("AnimeStudioPopularityAnalysis") \
-    .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
-    .getOrCreate()
+        .appName("AnalisisPopularitasStudio") \
+        .master("local[*]") \
+        .getOrCreate()
+    
+    spark.sparkContext.setLogLevel("WARN")
+    print("=== Mesin Spark Berhasil Dinyalakan ===")
 ```
 
 ### Langkah 2: Memuat dan Membersihkan Data (Preprocessing)
@@ -146,18 +149,24 @@ scaler = MinMaxScaler()
 data[["popularity", "favorites"]] = scaler.fit_transform(data[["popularity", "favorites"]])
 ```
 
-### Langkah 3: Ekstraksi Data untuk Uji Statistik
+### Langkah 3: Ekstraksi dan Distribusi Data PySpark
 
 Kelompokkan nilai popularitas berdasarkan studio masing-masing dan kumpulkan ke dalam bentuk list agar dapat diproses oleh SciPy.
 
 ```python
-# Mengelompokkan data popularitas per studio
-grouped_data = df_final.groupBy("studio") \
-    .agg({"popularity": "collect_list"}) \
-    .collect()
 
 # Ekstraksi list popularitas untuk setiap kelompok studio
-studio_groups = [row["collect_list(popularity)"] for row in grouped_data]
+daftar_studio = [row['studios'] for row in df.select('studios').distinct().collect() if row['studios'] is not None]
+    print(f"Ditemukan {len(daftar_studio)} studio unik untuk dianalisis.")
+
+# Mengelompokkan data popularitas per studio
+kelompok_popularitas = []
+    for studio in daftar_studio:
+        skor_popularitas_studio = df.filter(df['studios'] == studio) \
+                                    .select('popularity') \
+                                    .rdd.flatMap(lambda x: x).collect()
+        if len(skor_popularitas_studio) > 0:
+            kelompok_popularitas.append(skor_popularitas_studio)
 ```
 
 ### Langkah 4: Menjalankan Uji Kruskal-Wallis
@@ -171,17 +180,19 @@ import scipy.stats as stats
 # H0: Distribusi tingkat popularitas anime sama di semua studio (Tidak ada pengaruh studio).
 # H1: Setidaknya satu studio memiliki distribusi popularitas yang berbeda secara signifikan.
 
-stat, p_value = stats.kruskal(*studio_groups)
+stat, p_value = kruskal(*kelompok_popularitas)
 
-print("============ HASIL UJI STATISTIK ============")
-print(f"Kruskal-Wallis H-Statistic : {stat:.4f}")
-print(f"P-Value                    : {p_value:.8e}")
+print("\n================ HASIL UJI STATISTIK KRUSKAL-WALLIS ================")
+    print(f"Nilai H-Statistic : {stat:.4f}")
+    print(f"Nilai P-Value     : {p_value}")
 
-alpha = 0.05
-if p_value < alpha:
-    print("\nKesimpulan: Tolak H0. Studio berpengaruh SIGNIFIKAN terhadap popularitas anime!")
-else:
-    print("\nKesimpulan: Gagal Tolak H0. Studio TIDAK berpengaruh signifikan terhadap popularitas anime.")
+    if p_value < 0.05:
+        print("\nKesimpulan: SIGNIFIKAN! (P-Value < 0.05)")
+        print("Studio produksi memberikan pengaruh yang nyata terhadap tingkat popularitas anime.")
+    else:
+        print("\nKesimpulan: TIDAK SIGNIFIKAN! (P-Value >= 0.05)")
+        print("Tidak ada perbedaan tingkat popularitas yang nyata antar-studio produksi.")
+    print("====================================================================")
 ```
 
 ### Langkah 5: Visualisasi Distribusi (Opsional)
@@ -192,22 +203,7 @@ Visualisasikan perbandingan distribusi popularitas studio-studio top menggunakan
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-# Konversi sampel data teratas ke Pandas untuk plotting
-pd_df = df_final.toPandas()
-
-# Ambil 5 studio dengan jumlah anime terbanyak untuk visualisasi
-top_5_studios = pd_df['studio'].value_counts().nlargest(5).index
-pd_filtered = pd_df[pd_df['studio'].isin(top_5_studios)]
-
-plt.figure(figsize=(12, 6))
-sns.boxplot(data=pd_filtered, x='studio', y='popularity', palette='Set2')
-plt.title('Distribusi Popularitas Anime di 5 Studio Terbesar')
-plt.xlabel('Studio')
-plt.ylabel('Popularitas (Peringkat - Lebih Kecil Lebih Populer)')
-plt.gca().invert_yaxis()  # Balik sumbu Y karena ranking 1 adalah yang paling populer
-plt.grid(axis='y', linestyle='--', alpha=0.7)
-plt.savefig('studio_popularity_distribution.png', dpi=300, bbox_inches='tight')
-plt.show()
+# --Kode Visualisasi Menyusul--
 ```
 
 ---
@@ -262,5 +258,3 @@ Daftar kontributor yang telah mengembangkan proyek analisis ini:
 | <img src="https://github.com/taufiqurahman13.png" width="60px;" alt="Avatar"/> | **[Taufiqurahman13](https://github.com/taufiqurahman13)** | **Dataset collection & preprocessing** | - Melakukan dataset collection & preprocessing.<br>- Membersihkan dataset, menyaring studio _Unknown_, dan memfilter ambang sampel anime minimum.                                                                                                                                                      |
 
 ---
-
-testing

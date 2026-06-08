@@ -30,7 +30,7 @@ def jalankan_analisis_kruskal():
     daftar_studio = [row['studios'] for row in df.select('studios').distinct().collect() if row['studios'] is not None]
     print(f"Ditemukan {len(daftar_studio)} studio unik untuk dianalisis.")
 
-    # TAHAP 4 DISTRIBUSI DATA (MENGELLOMPOKKAN POPULARITAS BERDASARKAN STUDIO)
+    # TAHAP 4 DISTRIBUSI DATA (MENGELOMPOKKAN POPULARITAS BERDASARKAN STUDIO)
     kelompok_popularitas = []
     for studio in daftar_studio:
         skor_popularitas_studio = df.filter(df['studios'] == studio) \
