@@ -17,7 +17,7 @@ Repositori ini berisi dokumentasi dan kode implementasi untuk menganalisis **pen
 4. [Langkah-langkah Melakukan Analisa](#-langkah-langkah-melakukan-analisa)
 5. [Struktur Repositori](#-struktur-repositori)
 6. [Panduan Kontribusi GitHub](#-panduan-kontribusi-github)
-7. [Kontributor & Tim Pengembang ](#-kontributor-tim-pengembang)
+7. [Kontributor dan Tim Pengembang](#-kontributor-dan-tim-pengembang)
 
 ---
 
@@ -213,11 +213,18 @@ import matplotlib.pyplot as plt
 
 ```text
 anime-analisis/
-├── anime_dataset.csv      # Dataset anime utama (berisi studio & popularitas)
-├── preprocessing.py       # Skrip untuk membersihkan dan memformat data
-├── analysis.py            # Skrip utama analisis PySpark & SciPy
-├── requirements.txt       # Daftar dependensi pustaka Python
-└── README.md              # Dokumentasi proyek (Dokumen ini)
+├── .vscode                                 # setting json vs code
+├── backup                                  # folder data cadangan
+├── data                                    # folder kumpulan source dataset
+|   ├── processed
+|   |   └── dataset_preprocessing.csv       # dataset hasil preprocessing
+|   └── raw                             
+|       └── dataset_mentah.csv              # dataset utama 
+├── src
+|   ├── analysis.py                         # Proses Analisa data Final
+|   └── preprocessing.py                    # Proses Pembersihan data
+├── requirements.txt                        # Daftar dependensi pustaka Python
+└── README.md                               # Dokumentasi proyek (Dokumen ini)
 ```
 
 ---
@@ -249,7 +256,7 @@ Kami sangat menyambut baik kontribusi dari komunitas! Baik itu berupa perbaikan 
 
 ---
 
-## 👥 Kontributor & Tim Pengembang
+## 👥 Kontributor dan Tim Pengembang
 
 Daftar kontributor yang telah mengembangkan proyek analisis ini:
 
