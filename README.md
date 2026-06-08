@@ -115,7 +115,7 @@ import pandas as pd
 # Load data
 data = pd.read_csv("anime_dataset_pre.csv")
 
-# mengamil colom yang dibutuhkan
+# mengambil colom yang dibutuhkan
 data = data[["title", "popularity", "favorites", "studios"]]
 
 # menyimpan perubahan yang dari kode sebelumnya
