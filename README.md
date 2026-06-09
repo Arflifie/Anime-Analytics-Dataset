@@ -154,6 +154,13 @@ data["studios"] = encoder.fit_transform(data["studios"])
 from sklearn.preprocessing import MinMaxScaler
 scaler = MinMaxScaler()
 data[["popularity", "favorites"]] = scaler.fit_transform(data[["popularity", "favorites"]])
+
+#menambahkan kolom studios_name
+data_pre = pd.read_csv("../data/processed/anime_dataset_pre.csv")
+data = pd.read_csv("../data/processed/anime_dataset_pre2.csv")
+data_pre["studios_name"] = data["studios"]
+data_pre.to_csv("../data/processed/anime_dataset_pre.csv", index=False)
+print("Selesai! Kolom 'studios_name' berhasil ditambahkan.")
 ```
 
 ### Langkah 3: Ekstraksi dan Distribusi Data PySpark
