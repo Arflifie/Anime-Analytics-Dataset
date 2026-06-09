@@ -221,6 +221,7 @@ anime-analisis/
 |   └── raw                             
 |       └── dataset_mentah.csv              # dataset utama 
 ├── src
+|   ├── analysis.ipynb                      # Proses Analisa data Final lingkungan jupyter notebook
 |   ├── analysis.py                         # Proses Analisa data Final
 |   └── preprocessing.py                    # Proses Pembersihan data
 ├── requirements.txt                        # Daftar dependensi pustaka Python
