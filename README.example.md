@@ -79,14 +79,12 @@ pip install -r requirements.txt
 Isi dari `requirements.txt` meliputi:
 
 ```text
-openjdk>=17.0.2
+openjdk>=24.0.2
 Python>=3.10.6
 pyspark>=4.1.2
 scipy>=1.7.0
 pandas>=1.3.0
 scikit-learn>=1.8.0
-matplotlib>=3.5.0  
-seaborn>=0.12.0  
 ```
 
 ---
@@ -103,16 +101,12 @@ Inisialisasi koneksi Spark dengan alokasi memori yang sesuai di dalam script Pyt
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder \
-    .appName("AnalisisPopularitasStudio") \
-    .master("local[*]") \
-    .config("spark.driver.memory",          "4g") \
-    .config("spark.executor.memory",        "4g") \
-    .config("spark.driver.maxResultSize",   "2g") \
-    .config("spark.sql.shuffle.partitions", "8") \
-    .getOrCreate()
-
-spark.sparkContext.setLogLevel("WARN")
-print("=== Mesin Spark Berhasil Dinyalakan ===")
+        .appName("AnalisisPopularitasStudio") \
+        .master("local[*]") \
+        .getOrCreate()
+    
+    spark.sparkContext.setLogLevel("WARN")
+    print("=== Mesin Spark Berhasil Dinyalakan ===")
 ```
 
 ### Langkah 2: Memuat dan Membersihkan Data (Preprocessing)
@@ -161,45 +155,19 @@ data[["popularity", "favorites"]] = scaler.fit_transform(data[["popularity", "fa
 Kelompokkan nilai popularitas berdasarkan studio masing-masing dan kumpulkan ke dalam bentuk list agar dapat diproses oleh SciPy.
 
 ```python
-import pyspark.sql.functions as F
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
 
-# Schema manual → Spark tidak perlu scan file dua kali (hindari buffer error)
-schema = StructType([
-    StructField("title",      StringType(),  True),
-    StructField("popularity", DoubleType(),  True),
-    StructField("favorites",  DoubleType(),  True),
-    StructField("studios",    IntegerType(), True),
-])
+# Ekstraksi list popularitas untuk setiap kelompok studio
+daftar_studio = [row['studios'] for row in df.select('studios').distinct().collect() if row['studios'] is not None]
+    print(f"Ditemukan {len(daftar_studio)} studio unik untuk dianalisis.")
 
-df = spark.read.csv(path_data_bersih, header=True, schema=schema)
-
-# Ambil daftar studio unik
-daftar_studio = [
-    row['studios'] for row in df.select('studios').distinct().collect()
-    if row['studios'] is not None
-]
-print(f"Ditemukan {len(daftar_studio)} studio unik untuk dianalisis.")
-
-# Kelompokkan popularitas per studio dalam SATU query (efisien)
-# groupBy menggantikan loop per studio yang melakukan ratusan query terpisah
-hasil = (
-    df.groupBy('studios')
-      .agg(
-          F.collect_list('popularity').alias('skor_popularitas'),
-          F.count('popularity').alias('jumlah')
-      )
-      .filter(F.col('jumlah') >= 10)   # hanya studio dengan minimal 10 anime
-      .collect()
-)
-
-kelompok_popularitas_full_population = [row['skor_popularitas'] for row in hasil]
-groups_filtered_for_test             = [row['studios']          for row in hasil]
-
-# Matikan Spark — data sudah di memori Python
-spark.stop()
-print(f"Berhasil mengekstrak {len(groups_filtered_for_test)} studio untuk dianalisis.")
-print("=== Proses PySpark Selesai. Masuk ke Pengujian SciPy ===")
+# Mengelompokkan data popularitas per studio
+kelompok_popularitas = []
+    for studio in daftar_studio:
+        skor_popularitas_studio = df.filter(df['studios'] == studio) \
+                                    .select('popularity') \
+                                    .rdd.flatMap(lambda x: x).collect()
+        if len(skor_popularitas_studio) > 0:
+            kelompok_popularitas.append(skor_popularitas_studio)
 ```
 
 ### Langkah 4: Menjalankan Uji Kruskal-Wallis
@@ -207,54 +175,25 @@ print("=== Proses PySpark Selesai. Masuk ke Pengujian SciPy ===")
 Gunakan pustaka `scipy.stats` untuk menguji signifikansi pengaruh studio.
 
 ```python
-import itertools
-import pandas as pd
-from scipy.stats import kruskal
+import scipy.stats as stats
 
 # Formulasi Hipotesis:
 # H0: Distribusi tingkat popularitas anime sama di semua studio (Tidak ada pengaruh studio).
 # H1: Setidaknya satu studio memiliki distribusi popularitas yang berbeda secara signifikan.
 
-# Konversi ke long-format DataFrame
-df_viz_full = pd.DataFrame({
-    'studios': list(itertools.chain.from_iterable(
-        [sid] * len(scores)
-        for sid, scores in zip(groups_filtered_for_test,
-                               kelompok_popularitas_full_population)
-    )),
-    'popularity': list(itertools.chain.from_iterable(
-        kelompok_popularitas_full_population
-    ))
-})
-
-# Ambil Top 10 studio paling populer (median terkecil = rank terbaik)
-top_10_ids = (
-    df_viz_full.groupby('studios')['popularity']
-               .median()
-               .sort_values(ascending=True)
-               .head(10)
-               .index.tolist()
-)
-
-# Jalankan Kruskal-Wallis hanya pada Top 10 agar konsisten dengan visualisasi
-kelompok_top10 = [
-    kelompok_popularitas_full_population[i]
-    for i, sid in enumerate(groups_filtered_for_test)
-    if sid in top_10_ids
-]
-stat, p_value = kruskal(*kelompok_top10)
+stat, p_value = kruskal(*kelompok_popularitas)
 
 print("\n================ HASIL UJI STATISTIK KRUSKAL-WALLIS ================")
-print(f"Nilai H-Statistic : {stat:.4f}")
-print(f"Nilai P-Value     : {p_value:.6f}")
+    print(f"Nilai H-Statistic : {stat:.4f}")
+    print(f"Nilai P-Value     : {p_value}")
 
-if p_value < 0.05:
-    print("\nKesimpulan: SIGNIFIKAN! (P-Value < 0.05)")
-    print("Studio produksi memberikan pengaruh yang nyata terhadap tingkat popularitas anime.")
-else:
-    print("\nKesimpulan: TIDAK SIGNIFIKAN! (P-Value >= 0.05)")
-    print("Tidak ada perbedaan tingkat popularitas yang nyata antar-studio produksi.")
-print("====================================================================")
+    if p_value < 0.05:
+        print("\nKesimpulan: SIGNIFIKAN! (P-Value < 0.05)")
+        print("Studio produksi memberikan pengaruh yang nyata terhadap tingkat popularitas anime.")
+    else:
+        print("\nKesimpulan: TIDAK SIGNIFIKAN! (P-Value >= 0.05)")
+        print("Tidak ada perbedaan tingkat popularitas yang nyata antar-studio produksi.")
+    print("====================================================================")
 ```
 
 ### Langkah 5: Visualisasi Distribusi (Opsional)
