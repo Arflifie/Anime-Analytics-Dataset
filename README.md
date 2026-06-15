@@ -85,8 +85,8 @@ pyspark>=4.1.2
 scipy>=1.7.0
 pandas>=1.3.0
 scikit-learn>=1.8.0
-matplotlib>=3.5.0  
-seaborn>=0.12.0  
+matplotlib>=3.5.0
+seaborn>=0.12.0
 ```
 
 ---
@@ -95,12 +95,33 @@ seaborn>=0.12.0
 
 Berikut adalah panduan langkah demi langkah untuk mereproduksi analisis dari awal hingga akhir:
 
-### Langkah 1: Mempersiapkan Spark Session
+### Langkah 1: Import Libraries & Inisialisasi Mesin Spark
 
-Inisialisasi koneksi Spark dengan alokasi memori yang sesuai di dalam script Python Anda.
+Import semua pustaka yang dibutuhkan, paksa PySpark menggunakan Python interpreter yang sama agar tidak terjadi error versi, lalu nyalakan Spark Session.
 
 ```python
+import os
+import sys
+import itertools
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+from pyspark.sql.types import (
+    StructType, StructField,
+    StringType, DoubleType, IntegerType
+)
+from scipy.stats import kruskal
+
+# Paksa PySpark pakai Python interpreter yang sama dengan Jupyter
+# Tanpa ini, PySpark bisa error karena pakai Python versi berbeda
+os.environ['PYSPARK_PYTHON']        = sys.executable
+os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+
+print("=== Menyalakan Mesin Spark ===")
 
 spark = SparkSession.builder \
     .appName("AnalisisPopularitasStudio") \
@@ -115,47 +136,43 @@ spark.sparkContext.setLogLevel("WARN")
 print("=== Mesin Spark Berhasil Dinyalakan ===")
 ```
 
-### Langkah 2: Memuat dan Membersihkan Data (Preprocessing)
+### Langkah 2: Preprocessing Data
 
-Baca dataset dan lakukan pembersihan data, seperti menghapus nilai kosong (`null`), studio yang bertuliskan `Unknown`, serta memfilter studio yang memiliki sampel anime terlalu sedikit (misal kurang dari 10 anime) untuk menjaga keandalan uji statistik.
+Baca dataset mentah, pilih kolom yang dibutuhkan, hapus missing value dan duplikat, lakukan encoding dan normalisasi, lalu tambahkan kolom `studios_name` ke dataset akhir.
 
 ```python
 import pandas as pd
 
-# Load data
-data = pd.read_csv("anime_dataset_pre.csv")
-
-# mengambil colom yang dibutuhkan
+# Load data mentah dan pilih kolom yang dibutuhkan
+data = pd.read_csv("../data/raw/anime_dataset.csv")
 data = data[["title", "popularity", "favorites", "studios"]]
+data.to_csv("../data/processed/anime_dataset_pre.csv", index=False)
 
-# menyimpan perubahan yang dari kode sebelumnya
-data.to_csv("anime_dataset_pre.csv", index=False)
-
-#menampilkan 5 baris pertama dari dataset, jumlah baris dan kolom pada dataset, ringkasan struktur dari dataset dan analisis deskriptif dari kolom numerik
+# Tampilkan ringkasan awal dataset
 print(data.head())
 print(data.shape)
 print(data.info())
 print(data.describe())
 
-#menampilkan berapa banyak missing value pada tiap kolom lalu menghilangkan baris missing valuenya
+# Hapus missing value
 print(data.isnull().sum())
 data = data.dropna()
 
-#menampilkan berapa banyak data duplicate lalu menghilangkan baris data yang terduplicate
+# Hapus data duplikat
 print(data.duplicated().sum())
-data.drop_duplicates(inplace=True) 
+data.drop_duplicates(inplace=True)
 
-#Encode kolom studios
+# Encode kolom studios (string → integer)
 from sklearn.preprocessing import LabelEncoder
 encoder = LabelEncoder()
 data["studios"] = encoder.fit_transform(data["studios"])
 
-#Normalisasi data kolom popularity dan favorites
+# Normalisasi kolom popularity dan favorites ke rentang [0, 1]
 from sklearn.preprocessing import MinMaxScaler
 scaler = MinMaxScaler()
 data[["popularity", "favorites"]] = scaler.fit_transform(data[["popularity", "favorites"]])
 
-#menambahkan kolom studios_name
+# Tambahkan kolom studios_name (nama asli studio) ke dataset preprocessed
 data_pre = pd.read_csv("../data/processed/anime_dataset_pre.csv")
 data = pd.read_csv("../data/processed/anime_dataset_pre2.csv")
 data_pre["studios_name"] = data["studios"]
@@ -163,35 +180,36 @@ data_pre.to_csv("../data/processed/anime_dataset_pre.csv", index=False)
 print("Selesai! Kolom 'studios_name' berhasil ditambahkan.")
 ```
 
-### Langkah 3: Ekstraksi dan Distribusi Data PySpark
+### Langkah 3: Baca Data & Ekstraksi dengan PySpark
 
-Kelompokkan nilai popularitas berdasarkan studio masing-masing dan kumpulkan ke dalam bentuk list agar dapat diproses oleh SciPy.
+Baca dataset hasil preprocessing ke Spark dengan schema manual, kelompokkan popularitas per studio menggunakan satu query `groupBy` (jauh lebih efisien dari loop), lalu matikan Spark setelah data tersimpan di memori Python.
 
 ```python
-import pyspark.sql.functions as F
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
+path_data_bersih = "../data/processed/anime_dataset_pre.csv"
 
-# Schema manual → Spark tidak perlu scan file dua kali (hindari buffer error)
+# Schema manual → Spark tidak scan file dua kali → hindari buffer error
 schema = StructType([
-    StructField("title",      StringType(),  True),
-    StructField("popularity", DoubleType(),  True),
-    StructField("favorites",  DoubleType(),  True),
-    StructField("studios",    IntegerType(), True),
+    StructField("title",        StringType(),  True),
+    StructField("popularity",   DoubleType(),  True),
+    StructField("favorites",    DoubleType(),  True),
+    StructField("studios",      IntegerType(), True),
+    StructField("studios_name", StringType(),  True),
 ])
 
+print("\n>>> Mengintip 5 data teratas hasil preprocessing:")
 df = spark.read.csv(path_data_bersih, header=True, schema=schema)
+df.show(5)
 
-# Ambil daftar studio unik
+# Ambil daftar studio unik (untuk info)
 daftar_studio = [
     row['studios'] for row in df.select('studios').distinct().collect()
     if row['studios'] is not None
 ]
 print(f"Ditemukan {len(daftar_studio)} studio unik untuk dianalisis.")
 
-# Kelompokkan popularitas per studio dalam SATU query (efisien)
-# groupBy menggantikan loop per studio yang melakukan ratusan query terpisah
+# Kelompokkan popularitas per studio dalam SATU query — Spark hanya scan data sekali
 hasil = (
-    df.groupBy('studios')
+    df.groupBy('studios', 'studios_name')
       .agg(
           F.collect_list('popularity').alias('skor_popularitas'),
           F.count('popularity').alias('jumlah')
@@ -200,41 +218,48 @@ hasil = (
       .collect()
 )
 
+# Pisahkan hasil ke tiga list paralel — indeks ke-i selalu merujuk studio yang sama
 kelompok_popularitas_full_population = [row['skor_popularitas'] for row in hasil]
 groups_filtered_for_test             = [row['studios']          for row in hasil]
+groups_name_for_label                = [row['studios_name']     for row in hasil]
 
-# Matikan Spark — data sudah di memori Python
+# Matikan Spark — data sudah di memori Python, tidak dibutuhkan lagi
 spark.stop()
-print(f"Berhasil mengekstrak {len(groups_filtered_for_test)} studio untuk dianalisis.")
+print(f"\nBerhasil mengekstrak {len(groups_filtered_for_test)} studio untuk dianalisis.")
 print("=== Proses PySpark Selesai. Masuk ke Pengujian SciPy ===")
 ```
 
-### Langkah 4: Menjalankan Uji Kruskal-Wallis
+### Langkah 4: Analisis Pandas & Uji Kruskal-Wallis
 
-Gunakan pustaka `scipy.stats` untuk menguji signifikansi pengaruh studio.
+Konversi data ke long-format DataFrame, ambil Top 10 studio paling populer berdasarkan median, hitung statistik deskriptif, lalu jalankan uji Kruskal-Wallis.
 
 ```python
-import itertools
-import pandas as pd
-from scipy.stats import kruskal
-
 # Formulasi Hipotesis:
 # H0: Distribusi tingkat popularitas anime sama di semua studio (Tidak ada pengaruh studio).
 # H1: Setidaknya satu studio memiliki distribusi popularitas yang berbeda secara signifikan.
 
-# Konversi ke long-format DataFrame
+# TAHAP 1: Konversi ke Long-Format DataFrame
+# itertools.chain.from_iterable "meratakan" list of list menjadi list tunggal
+# zip() menjamin studios, studio_name, dan popularity selalu berpasangan dengan benar
 df_viz_full = pd.DataFrame({
     'studios': list(itertools.chain.from_iterable(
         [sid] * len(scores)
         for sid, scores in zip(groups_filtered_for_test,
                                kelompok_popularitas_full_population)
     )),
+    'studio_name': list(itertools.chain.from_iterable(
+        [name] * len(scores)
+        for name, scores in zip(groups_name_for_label,
+                                kelompok_popularitas_full_population)
+    )),
     'popularity': list(itertools.chain.from_iterable(
         kelompok_popularitas_full_population
     ))
 })
 
-# Ambil Top 10 studio paling populer (median terkecil = rank terbaik)
+# TAHAP 2: Ambil Top 10 studio paling populer
+# "popularity" = skor rank → nilai KECIL = lebih populer
+# ascending=True + head(10) → ambil 10 median terkecil = paling populer
 top_10_ids = (
     df_viz_full.groupby('studios')['popularity']
                .median()
@@ -243,36 +268,173 @@ top_10_ids = (
                .index.tolist()
 )
 
-# Jalankan Kruskal-Wallis hanya pada Top 10 agar konsisten dengan visualisasi
+# Mapping ID → nama studio untuk label visualisasi
+id_to_name = {
+    sid: name for sid, name in
+    zip(groups_filtered_for_test, groups_name_for_label)
+}
+category_order_named = [str(id_to_name.get(sid, sid)) for sid in top_10_ids]
+
+# TAHAP 3: Hitung statistik deskriptif Top 10
+top_10_summary_stats = (
+    df_viz_full[df_viz_full['studios'].isin(top_10_ids)]
+    .groupby('studios')
+    .agg(
+        N       =('popularity', 'count'),
+        Median  =('popularity', 'median'),
+        Mean    =('popularity', 'mean'),
+        Std_Dev =('popularity', 'std')
+    )
+    .reindex(top_10_ids)   # urutkan sesuai top_10_ids (kecil ke besar)
+    .reset_index()
+)
+# Tambahkan kolom nama studio ke summary stats
+top_10_summary_stats['studio_name'] = top_10_summary_stats['studios'].map(id_to_name)
+
+# TAHAP 4: Siapkan DataFrame & urutan kategori untuk visualisasi
+df_viz_top10 = df_viz_full[df_viz_full['studios'].isin(top_10_ids)].copy()
+df_viz_top10['studio_name'] = pd.Categorical(
+    df_viz_top10['studio_name'],
+    categories=category_order_named,
+    ordered=True
+)
+
+# TAHAP 5: Uji Kruskal-Wallis — hanya pada Top 10
+# Kruskal-Wallis menguji apakah >=1 studio punya distribusi popularitas berbeda
+# H0: semua studio memiliki distribusi yang sama
+# * unpacking (*) mengubah list of list menjadi argumen terpisah per studio
 kelompok_top10 = [
     kelompok_popularitas_full_population[i]
     for i, sid in enumerate(groups_filtered_for_test)
     if sid in top_10_ids
 ]
-stat, p_value = kruskal(*kelompok_top10)
+h_stat, p_value = kruskal(*kelompok_top10)
 
-print("\n================ HASIL UJI STATISTIK KRUSKAL-WALLIS ================")
-print(f"Nilai H-Statistic : {stat:.4f}")
+print(f"Nilai H-Statistic : {h_stat:.4f}")
 print(f"Nilai P-Value     : {p_value:.6f}")
-
-if p_value < 0.05:
-    print("\nKesimpulan: SIGNIFIKAN! (P-Value < 0.05)")
-    print("Studio produksi memberikan pengaruh yang nyata terhadap tingkat popularitas anime.")
-else:
-    print("\nKesimpulan: TIDAK SIGNIFIKAN! (P-Value >= 0.05)")
-    print("Tidak ada perbedaan tingkat popularitas yang nyata antar-studio produksi.")
-print("====================================================================")
 ```
 
-### Langkah 5: Visualisasi Distribusi (Opsional)
+### Langkah 5: Visualisasi Dashboard
 
-Visualisasikan perbandingan distribusi popularitas studio-studio top menggunakan Box Plot untuk mempermudah interpretasi data.
+Visualisasikan perbandingan distribusi popularitas studio-studio top menggunakan dashboard 4-panel yang terdiri dari Bar Chart, Box Plot, Strip Plot, dan Tabel Statistik.
 
 ```python
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-# --Kode Visualisasi Menyusul--
+sns.set_theme(style="whitegrid", palette="muted")
+fig, axes = plt.subplots(2, 2, figsize=(18, 13))
+plt.subplots_adjust(hspace=0.45, wspace=0.3)
+
+plt.suptitle(
+    'Analisis Big Data Terdistribusi (PySpark) & Inferensial Non-Parametrik (SciPy)\n'
+    'Dashboard Pengaruh Studio Produksi Terhadap Popularitas Anime',
+    fontsize=16, fontweight='bold', color='#2c3e50'
+)
+
+# ── GRAFIK 1: Bar Chart Median ──────────────────────────────
+ax1 = axes[0, 0]
+sns.barplot(
+    x='studio_name', y='Median',
+    data=top_10_summary_stats,
+    color='#5dade2', edgecolor='#34495e',
+    ax=ax1, order=category_order_named
+)
+for container in ax1.containers:
+    ax1.bar_label(container, fmt='%.4f', fontsize=8, padding=3)
+ax1.set_title('GRAFIK 1: Ringkasan Komparatif Median Popularitas',
+              fontsize=12, fontweight='bold', pad=10)
+ax1.set_xlabel('Studio Produksi', fontsize=10)
+ax1.set_ylabel('Median Skor Popularitas', fontsize=10)
+ax1.tick_params(axis='x', rotation=30)
+
+# ── GRAFIK 2: Box Plot ──────────────────────────────────────
+ax2 = axes[0, 1]
+sns.boxplot(
+    x='studio_name', y='popularity',
+    data=df_viz_top10,
+    palette='Pastel1', ax=ax2,
+    order=category_order_named,
+    showfliers=True, width=0.6
+)
+medians = top_10_summary_stats.set_index('studio_name')['Median']
+for i, studio in enumerate(category_order_named):
+    median_val = medians[studio]
+    ax2.text(i, median_val + 0.01, f'{median_val:.4f}',
+             ha='center', va='bottom', fontsize=8, fontweight='bold', color='#2c3e50')
+ax2.set_title('GRAFIK 2: Sebaran Distribusi Inferensial (Box Plot)',
+              fontsize=12, fontweight='bold', pad=10)
+ax2.set_xlabel('Studio Produksi', fontsize=10)
+ax2.set_ylabel('Skor Popularitas', fontsize=10)
+ax2.tick_params(axis='x', rotation=30)
+
+# ── GRAFIK 3: Strip Plot + Median Line ─────────────────────
+ax3 = axes[1, 0]
+sns.stripplot(
+    x='studio_name', y='popularity',
+    data=df_viz_top10,
+    palette='Dark2', ax=ax3,
+    order=category_order_named,
+    jitter=True, size=3, alpha=0.4
+)
+sns.boxplot(
+    x='studio_name', y='popularity',
+    data=df_viz_top10, ax=ax3,
+    order=category_order_named,
+    showfliers=False, showbox=False, showcaps=False,
+    medianprops={"color": "black", "linewidth": 2.5}
+)
+for i, studio in enumerate(category_order_named):
+    median_val = medians[studio]
+    ax3.text(i, median_val + 0.01, f'{median_val:.4f}',
+             ha='center', va='bottom', fontsize=8, fontweight='bold', color='black')
+ax3.set_title('GRAFIK 3: Sebaran Data Mentah Individual (Strip Plot)',
+              fontsize=12, fontweight='bold', pad=10)
+ax3.set_xlabel('Studio Produksi', fontsize=10)
+ax3.set_ylabel('Skor Popularitas', fontsize=10)
+ax3.tick_params(axis='x', rotation=30)
+
+# ── GRAFIK 4: Tabel Statistik & Keputusan ──────────────────
+ax4 = axes[1, 1]
+ax4.axis('off')
+
+stats_text  = "=" * 62 + "\n"
+stats_text += "       RINGKASAN STATISTIK DESKRIPTIF (TOP 10)          \n"
+stats_text += "=" * 62 + "\n"
+stats_text += f"{'Studio':<14}| {'N':<5}| {'Median':<8}| {'Mean':<8}| Std Dev\n"
+stats_text += "-" * 62 + "\n"
+for _, row in top_10_summary_stats.iterrows():
+    nama = str(row['studio_name'])[:13]
+    stats_text += (
+        f"{nama:<14}| "
+        f"{int(row['N']):<5}| "
+        f"{row['Median']:<8.4f}| "
+        f"{row['Mean']:<8.4f}| "
+        f"{row['Std_Dev']:.4f}\n"
+    )
+stats_text += "\n" + "=" * 62 + "\n"
+stats_text += "       HASIL UJI KRUSKAL-WALLIS (TOP 10 STUDIO)         \n"
+stats_text += "=" * 62 + "\n"
+stats_text += f"Nilai H-Statistic : {h_stat:.4f}\n"
+stats_text += f"Nilai P-Value     : {p_value:.6f}\n"
+
+decision_color = "green" if p_value < 0.05 else "red"
+decision_text  = "SIGNIFIKAN (Tolak H0)"   if p_value < 0.05 \
+            else "TIDAK SIGNIFIKAN (Terima H0)"
+
+ax4.text(0.02, 0.98, stats_text,
+         transform=ax4.transAxes, fontsize=9.5,
+         fontfamily='monospace', va='top')
+
+props = dict(boxstyle='round', facecolor=decision_color, alpha=0.3, edgecolor='black')
+ax4.text(0.5, 0.04,
+         f"Keputusan Statistik:\n{decision_text}",
+         transform=ax4.transAxes, fontsize=12,
+         fontweight='bold', color=decision_color,
+         ha='center', bbox=props)
+
+plt.tight_layout()
+plt.show()
 ```
 
 ---
@@ -286,8 +448,8 @@ anime-analisis/
 ├── data                                    # folder kumpulan source dataset
 |   ├── processed
 |   |   └── dataset_preprocessing.csv       # dataset hasil preprocessing
-|   └── raw                             
-|       └── dataset_mentah.csv              # dataset utama 
+|   └── raw
+|       └── dataset_mentah.csv              # dataset utama
 ├── src
 |   ├── analysis.ipynb                      # Proses Analisa data Final lingkungan jupyter notebook
 |   ├── analysis.py                         # Proses Analisa data Final
